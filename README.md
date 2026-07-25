@@ -113,29 +113,7 @@ Sends automated alerts when AI evaluation fails.
 
 ## Workflow Nodes
 
-### Vapi Webhook
-Receives completed sales call data.
-
-### Extract Transcript
-Extracts and structures conversation data.
-
-### Transcript Validation
-Ensures sufficient data exists for evaluation.
-
-### Groq Evaluation
-Analyzes sales performance using AI.
-
-### Parse Evaluation Response
-Converts AI output into structured insights.
-
-### Google Sheets Storage
-Stores evaluation results.
-
-### Email Reporting
-Sends coaching reports automatically.
-
-### Error Notification
-Alerts administrators of workflow failures.
+![Screenshot of the n8n workflow.]()
 
 ---
 
