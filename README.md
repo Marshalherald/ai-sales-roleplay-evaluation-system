@@ -103,11 +103,23 @@ Sends automated alerts when AI evaluation fails.
 
 ## Tech Stack
 
-- n8n
-- Vapi AI
-- Groq LLM
-- Google Sheets
-- Gmail API
+| Category                                           | Tool / Technology              |
+| -------------------------------------------------- | ------------------------------ |
+| Workflow Automation                                | n8n                            |
+| Conversational AI Platform                         | Vapi AI                        |
+| Large Language Model (Sales Evaluation & Coaching) | Groq LLM (Llama 3.3 70B)       |
+| API Integration Layer                              | REST APIs                      |
+| Event Trigger & Data Collection                    | Webhooks                       |
+| Business Logic Processing                          | JavaScript                     |
+| Structured Data Storage                            | Google Sheets                  |
+| Automated Email Reporting                          | Gmail API                      |
+| Performance Analytics Repository                   | Google Workspace               |
+| Prompt Engineering & Evaluation Logic              | LLM Prompt Design              |
+| Error Monitoring & Alerting                        | Gmail Notifications            |
+| Sales Coaching Intelligence                        | AI-Based Conversation Analysis |
+| Data Transformation                                | n8n Code Nodes                 |
+| Workflow Orchestration                             | Event-Driven Automation        |
+
 
 ---
 
