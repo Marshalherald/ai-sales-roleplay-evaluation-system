@@ -1,0 +1,507 @@
+{
+  "name": "AI Sales Roleplay Voice Bot copy",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "4c05fa17-a453-40f7-a2d7-0e9ac86dd342",
+        "options": {}
+      },
+      "id": "fad20982-27bd-43a6-9597-aea8a568056b",
+      "name": "Vapi Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        96
+      ],
+      "webhookId": "4c05fa17-a453-40f7-a2d7-0e9ac86dd342",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Search the Vapi webhook payload for the full transcript across possible locations\nconst results = [];\n\nfor (const item of $input.all()) {\n  const root = item.json || {};\n  const body = root.body || root;\n  const msg = body.message || body;\n  const call = msg.call || body.call || {};\n  const customer = msg.customer || body.customer || call.customer || {};\n\n  // Try direct transcript fields in several known Vapi locations\n  let transcript =\n    msg.transcript ||\n    (msg.artifact && msg.artifact.transcript) ||\n    body.transcript ||\n    (body.artifact && body.artifact.transcript) ||\n    (call && call.transcript) ||\n    '';\n\n  // Fallback: reconstruct transcript from a messages array\n  if (!transcript) {\n    const msgs =\n      (msg.artifact && msg.artifact.messages) ||\n      msg.messages ||\n      (body.artifact && body.artifact.messages) ||\n      body.messages ||\n      [];\n    if (Array.isArray(msgs) && msgs.length) {\n      transcript = msgs\n        .filter((m) => m && (m.role || m.message || m.content))\n        .map((m) => `${m.role || 'unknown'}: ${m.message || m.content || ''}`)\n        .join('\\n');\n    }\n  }\n\n  transcript = (transcript == null ? '' : String(transcript)).trim();\n\n  const call_id = call.id || msg.callId || body.call_id || body.callId || '';\n  const assistant_id =\n    msg.assistantId ||\n    (msg.assistant && msg.assistant.id) ||\n    call.assistantId ||\n    body.assistant_id ||\n    '';\n  const customer_number =\n    customer.number || body.customer_number || body.customerNumber || '';\n  const duration =\n    msg.durationSeconds ||\n    msg.durationMinutes ||\n    msg.duration ||\n    body.duration ||\n    call.duration ||\n    '';\n\n  results.push({\n    json: {\n      call_id: call_id || '',\n      assistant_id: assistant_id || '',\n      customer_number: customer_number || '',\n      duration: duration === 0 ? 0 : (duration || ''),\n      transcript: transcript || '',\n    },\n  });\n}\n\nreturn results;"
+      },
+      "id": "405e2ba5-3b4c-4830-90f9-c270bb8a57cc",
+      "name": "Extract Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "transcript-not-empty",
+              "leftValue": "={{ $json.transcript }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "transcript-length",
+              "leftValue": "={{ $json.transcript.length }}",
+              "rightValue": 50,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3575cd58-2718-4cfd-b807-eab09aa06e96",
+      "name": "Transcript Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.2,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an expert Sales Call Evaluator. Analyze the conversation between a sales representative and a prospect. Score the salesperson from 0 to 100 on: Rapport Building, Discovery, Qualification, Value Communication, Objection Handling, and Closing. Return ONLY valid JSON with these keys: overall_score, rapport_score, discovery_score, qualification_score, value_score, objection_score, closing_score (integers from 0 to 100), strengths, weaknesses, missed_opportunities, coaching_recommendations (each an array of short strings), and summary (a string).\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\"Evaluate this sales call transcript: \" + $('Extract Transcript').item.json.transcript) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "6cc20484-ef97-4126-9f0f-32e13f92ddc9",
+      "name": "Groq Evaluation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        672,
+        96
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "8UW54TMrO1KnANbq",
+          "name": "Groq account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse response.choices[0].message.content into structured JSON (safely)\n\nconst results = [];\nconst inputs = $input.all();\nconst extracted = $('Extract Transcript').all();\n\nconst toStr = (v) => {\n  if (Array.isArray(v)) return v.map((x) => String(x)).join(', ');\n  if (v == null) return '';\n  if (typeof v === 'object') return JSON.stringify(v);\n  return String(v);\n};\n\nconst toNum = (v) => {\n  const n = parseFloat(v);\n  return Number.isFinite(n) ? n : 0;\n};\n\nfor (let i = 0; i < inputs.length; i++) {\n\n  const item = inputs[i];\n\n  const src = extracted[i]\n    ? extracted[i].json\n    : (extracted[0] ? extracted[0].json : {});\n\n  let raw =\n    item.json?.choices?.[0]?.message?.content ||\n    item.json?.body?.choices?.[0]?.message?.content ||\n    item.json?.message?.content ||\n    '';\n\n  let parsed = {};\n\n  if (raw && typeof raw === 'object') {\n    parsed = raw;\n  } else if (raw) {\n\n    try {\n      parsed = JSON.parse(raw);\n\n    } catch (e) {\n\n      try {\n\n        const match = String(raw).match(/\\{[\\s\\S]*\\}/);\n\n        parsed = match\n          ? JSON.parse(match[0])\n          : {};\n\n      } catch (e2) {\n        parsed = {};\n      }\n\n    }\n\n  }\n\n  results.push({\n    json: {\n\n      // Data from Extract Transcript node\n      call_id: src.call_id || '',\n      assistant_id: src.assistant_id || '',\n      customer_number: src.customer_number || '',\n      duration: src.duration || '',\n      transcript: src.transcript || '',\n\n      // Evaluation Scores\n      overall_score: toNum(parsed.overall_score),\n      rapport_score: toNum(parsed.rapport_score),\n      discovery_score: toNum(parsed.discovery_score),\n      qualification_score: toNum(parsed.qualification_score),\n      value_score: toNum(parsed.value_score),\n      objection_score: toNum(parsed.objection_score),\n      closing_score: toNum(parsed.closing_score),\n\n      // Evaluation Insights\n      strengths: toStr(parsed.strengths),\n      weaknesses: toStr(parsed.weaknesses),\n      missed_opportunities: toStr(parsed.missed_opportunities),\n      coaching_recommendations: toStr(parsed.coaching_recommendations),\n      summary: parsed.summary || ''\n\n    }\n  });\n\n}\n\nreturn results;"
+      },
+      "id": "b39c4fa5-1374-4bfa-942b-592edcde0af6",
+      "name": "Parse Evaluation Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "https://docs.google.com/spreadsheets/d/1q8dwH4Z1a03Vp0GSQDjsCXq8v8ToDBKX74hR8KeP1Kc/edit#gid=0"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "url",
+          "value": "https://docs.google.com/spreadsheets/d/1q8dwH4Z1a03Vp0GSQDjsCXq8v8ToDBKX74hR8KeP1Kc/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $now.toISO() }}",
+            "Call ID": "={{ $json.call_id }}",
+            "Assistant ID": "={{ $('Extract Transcript').item.json.assistant_id }}",
+            "Duration": "={{ $('Extract Transcript').item.json.duration }}",
+            "Overall Score": "={{ $json.overall_score }}",
+            "Rapport Score": "={{ $json.rapport_score }}",
+            "Discovery Score": "={{ $json.discovery_score }}",
+            "Qualification Score": "={{ $json.qualification_score }}",
+            "Value Score": "={{ $json.value_score }}",
+            "Objection Score": "={{ $json.objection_score }}",
+            "Closing Score": "={{ $json.closing_score }}",
+            "Strengths": "={{ $json.strengths }}",
+            "Weaknesses": "={{ $json.weaknesses }}",
+            "Missed Opportunities": "={{ $json.missed_opportunities }}",
+            "Coaching Recommendations": "={{ $json.coaching_recommendations }}",
+            "Summary": "={{ $json.summary }}",
+            "Transcript": "={{ $json.transcript }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Call ID",
+              "displayName": "Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Assistant ID",
+              "displayName": "Assistant ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Duration",
+              "displayName": "Duration",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Overall Score",
+              "displayName": "Overall Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Rapport Score",
+              "displayName": "Rapport Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Discovery Score",
+              "displayName": "Discovery Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Qualification Score",
+              "displayName": "Qualification Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Value Score",
+              "displayName": "Value Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Objection Score",
+              "displayName": "Objection Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Closing Score",
+              "displayName": "Closing Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Strengths",
+              "displayName": "Strengths",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Weaknesses",
+              "displayName": "Weaknesses",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Missed Opportunities",
+              "displayName": "Missed Opportunities",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Coaching Recommendations",
+              "displayName": "Coaching Recommendations",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Transcript",
+              "displayName": "Transcript",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "a0f39fc2-2547-4d1e-915c-030253c65a79",
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1120,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "4WkbuFSJ2GWktNZw",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "marshalherald@gmail.com",
+        "subject": "=Sales Call Evaluation Report - {{ $json.call_id }}",
+        "message": "={{ `\n<h2>Sales Call Evaluation Report</h2>\n\n<p><b>Call ID:</b> ${$json[\"Call ID\"]}</p>\n\n<h3>Overall Score: ${$json[\"Overall Score\"]}</h3>\n\n<h3>Individual Scores</h3>\n\n<ul>\n<li><b>Rapport:</b> ${$json[\"Rapport Score\"]}</li>\n<li><b>Discovery:</b> ${$json[\"Discovery Score\"]}</li>\n<li><b>Qualification:</b> ${$json[\"Qualification Score\"]}</li>\n<li><b>Value Communication:</b> ${$json[\"Value Score\"]}</li>\n<li><b>Objection Handling:</b> ${$json[\"Objection Score\"]}</li>\n<li><b>Closing:</b> ${$json[\"Closing Score\"]}</li>\n</ul>\n\n<h3>Strengths</h3>\n<p>${$json[\"Strengths\"]}</p>\n\n<h3>Weaknesses</h3>\n<p>${$json[\"Weaknesses\"]}</p>\n\n<h3>Missed Opportunities</h3>\n<p>${$json[\"Missed Opportunities\"]}</p>\n\n<h3>Coaching Recommendations</h3>\n<p>${$json[\"Coaching Recommendations\"]}</p>\n\n<h3>Summary</h3>\n<p>${$json[\"Summary\"]}</p>\n` }}",
+        "options": {}
+      },
+      "id": "8009694d-375a-44ba-9ab6-6ada6c47050c",
+      "name": "Send Evaluation Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        0
+      ],
+      "webhookId": "766a1a1b-c413-42a7-9dd6-40d00af15213",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LDjLnnMGkX62oGDV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "marshalherald@gmail.com",
+        "subject": "Groq Evaluation Failed",
+        "message": "=<h2>Groq Evaluation Failed</h2>\n<p>The Groq evaluation step failed for the following call.</p>\n<p><b>Call ID:</b> {{ $('Extract Transcript').item.json.call_id }}</p>\n<p><b>Error Message:</b> {{ JSON.stringify($json).slice(0, 800) }}</p>\n<p><b>Timestamp:</b> {{ $now.toISO() }}</p>",
+        "options": {}
+      },
+      "id": "e1e50035-0d70-4365-83c8-6940eabef977",
+      "name": "Notify Admin (Groq Failed)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        192
+      ],
+      "webhookId": "5d3afea0-10f4-49f8-9a5a-f809f8b69815",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LDjLnnMGkX62oGDV",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -96
+      ],
+      "id": "5fc9afa4-be8e-494a-be3c-d4f6c9b7fcad",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## I'm a notfftyfhtgggfyhgh",
+        "width": 224,
+        "color": "#110808"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        128,
+        -96
+      ],
+      "id": "37e08391-5a76-41c2-bae6-d83227da15a4",
+      "name": "Sticky Note1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Vapi Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Transcript": {
+      "main": [
+        [
+          {
+            "node": "Transcript Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript Exists?": {
+      "main": [
+        [
+          {
+            "node": "Groq Evaluation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Evaluation": {
+      "main": [
+        [
+          {
+            "node": "Parse Evaluation Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Admin (Groq Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Evaluation Response": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Send Evaluation Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "80eb0dcb-a155-4b2d-9881-fe13761a6aca",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b2c4deb0119da55ae57ec98932f32a21ae952804a00b2a52203ee99a43b7db87"
+  },
+  "nodeGroups": [],
+  "id": "cyLhLAtL98I6GkeQ",
+  "tags": []
+}
