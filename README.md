@@ -55,6 +55,9 @@ Google Sheets Database
 ↓
 Email Reporting
 
+<p align="center">
+  <img src="./screenshots/architecture.png" alt="System Architecture" width="1000"/>
+</p>
 ---
 
 ## Evaluation Criteria
@@ -125,7 +128,9 @@ Sends automated alerts when AI evaluation fails.
 
 ## Workflow Nodes
 
-![Screenshot of the n8n workflow.]()
+<p align="center">
+  <img src="./screenshots/sales_eval.jpeg" alt="Workflow" width="1000"/>
+</p>
 
 ---
 
